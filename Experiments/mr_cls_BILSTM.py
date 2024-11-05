@@ -46,6 +46,7 @@ from sklearn.utils import shuffle
 # Custom imports
 # Some of those functions can probably be incorporated as methods in the class
 from mr_generic_scripts import *
+from mr_generic_scripts import load_combined_data
 
 class MR_bilstm:
     
@@ -171,52 +172,102 @@ class MR_bilstm:
     # Function that trains the classifier
     # Input - a train set, and a val set
     def mr_train(self, train_df, val_df):
-        
-        # Reset the tokenizer and the model at the start of each training
-        
-        self.mr_c = None
-        self.mr_tok = None       
-        
-        # Convert dataframes to datasets
-        X_train_idx, y_train, train_dataset = self.mr_to_dataset(train_df)
-        X_val_idx, y_val, val_dataset = self.mr_to_dataset(val_df)
-        
-        # Current shape var
-        inp_shape = np.shape(X_train_idx[0])[0]
+    # Reset the tokenizer and the model at the start of each training
+    self.mr_c = None
+    self.mr_tok = None       
+
+    # Load combined data for training
+    train_df = load_combined_data()  # Load the combined (original + augmented) dataset
+
+    # Convert dataframes to datasets
+    X_train_idx, y_train, train_dataset = self.mr_to_dataset(train_df)
+    X_val_idx, y_val, val_dataset = self.mr_to_dataset(val_df)
+
+    # Current shape var
+    inp_shape = np.shape(X_train_idx[0])[0]
+
+    # Define a vanilla BILSTM model
+    model = tf.keras.Sequential([
+        # Input layer
+        tf.keras.layers.Input(shape=(inp_shape)),
+        # Word embedding layers, size of the vocabulary X 64 dimensions
+        tf.keras.layers.Embedding(1000, 64),
+        # BILSTM layer, same dimensions as embeddings
+        tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
+        # Dense relu layer on top of the BILSTM
+        tf.keras.layers.Dense(64, activation='relu'),
+        # Add dropout to reduce overfitting
+        tf.keras.layers.Dropout(.5),
+        # Softmax classification for 3 classes
+        tf.keras.layers.Dense(3,activation='softmax')
+    ])
+
+    # Compile the model
+    model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                  optimizer=tf.keras.optimizers.Adam(1e-4),
+                  metrics=['accuracy'])        
+
+    # Print the model summary
+    print(model.summary())
+
+    print('\n Training')
+
+    # Train
+    history = model.fit(train_dataset, epochs=20,
+                        validation_data=val_dataset, 
+                        validation_steps=30)
+
+    # Update the current model variable
+    self.mr_c = model
+
     
-        # Define a vanilla BILSTM model
-        model = tf.keras.Sequential([
-            # Input layer
-            tf.keras.layers.Input(shape=(inp_shape)),
-            # Word embedding layers, size of the vocabulary X 64 dimensions
-            tf.keras.layers.Embedding(1000, 64),
-            # BILSTM layer, same dimensions as embeddings
-            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
-            # Dense relu layer on top of the BILSTM
-            tf.keras.layers.Dense(64, activation='relu'),
-            # Add dropout to reduce overfitting
-            tf.keras.layers.Dropout(.5),
-            # Softmax classification for 3 classes
-            tf.keras.layers.Dense(3,activation='softmax')
-        ])
+    # def mr_train(self, train_df, val_df):
         
-        # Compile the model
-        model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                      optimizer=tf.keras.optimizers.Adam(1e-4),
-                      metrics=['accuracy'])        
+    #     # Reset the tokenizer and the model at the start of each training
         
-        # Print the moodel setting
-        print(model.summary())
+    #     self.mr_c = None
+    #     self.mr_tok = None       
         
-        print('\n Training')
+    #     # Convert dataframes to datasets
+    #     X_train_idx, y_train, train_dataset = self.mr_to_dataset(train_df)
+    #     X_val_idx, y_val, val_dataset = self.mr_to_dataset(val_df)
         
-        # Train
-        history = model.fit(train_dataset, epochs=20,
-                            validation_data=val_dataset, 
-                            validation_steps=30)
+    #     # Current shape var
+    #     inp_shape = np.shape(X_train_idx[0])[0]
+    
+    #     # Define a vanilla BILSTM model
+    #     model = tf.keras.Sequential([
+    #         # Input layer
+    #         tf.keras.layers.Input(shape=(inp_shape)),
+    #         # Word embedding layers, size of the vocabulary X 64 dimensions
+    #         tf.keras.layers.Embedding(1000, 64),
+    #         # BILSTM layer, same dimensions as embeddings
+    #         tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
+    #         # Dense relu layer on top of the BILSTM
+    #         tf.keras.layers.Dense(64, activation='relu'),
+    #         # Add dropout to reduce overfitting
+    #         tf.keras.layers.Dropout(.5),
+    #         # Softmax classification for 3 classes
+    #         tf.keras.layers.Dense(3,activation='softmax')
+    #     ])
+        
+    #     # Compile the model
+    #     model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    #                   optimizer=tf.keras.optimizers.Adam(1e-4),
+    #                   metrics=['accuracy'])        
+        
+    #     # Print the moodel setting
+    #     print(model.summary())
+        
+    #     print('\n Training')
+        
+    #     # Train
+    #     history = model.fit(train_dataset, epochs=20,
+    #                         validation_data=val_dataset, 
+    #                         validation_steps=30)
             
-        # Update the current model variable
-        self.mr_c = model
+    #     # Update the current model variable
+    #     self.mr_c = model
         
     # Function that evaluates the model on a test set
     # Input - test set
@@ -339,23 +390,44 @@ class MR_bilstm:
     
     # Function for a dummy one run on train-test
     # Input - full df, ratio for splitting on train/val/test, return errors or not
+    
     def mr_one_train_test(self, full_df, test_r, val_r=0):
+    # Load combined data
+    full_df = load_combined_data()
+
+    # Split train and test
+    train_df, test_df = train_test_split(full_df, test_size=test_r)
+
+    # Check if we also need val
+    if val_r > 0:
+        train_df, val_df = train_test_split(train_df, test_size=val_r)
+    else:
+        val_df = test_df
+
+    # Train the classifier
+    self.mr_train(train_df, val_df)
+
+    # Test the classifier
+    return self.mr_test(test_df)
+
+    
+    # def mr_one_train_test(self, full_df, test_r, val_r=0):
         
-        # Split train and test
-        train_df, test_df = train_test_split(full_df, test_size = test_r)
+    #     # Split train and test
+    #     train_df, test_df = train_test_split(full_df, test_size = test_r)
         
-        # Check if we also need val
-        if val_r > 0:
-            train_df, val_df = train_test_split(train_df, test_size = val_r)
-        else:
-            # If not, validation is same as test
-            val_df = test_df
+    #     # Check if we also need val
+    #     if val_r > 0:
+    #         train_df, val_df = train_test_split(train_df, test_size = val_r)
+    #     else:
+    #         # If not, validation is same as test
+    #         val_df = test_df
             
-        # Train the classifier
-        self.mr_train(train_df, val_df)
+    #     # Train the classifier
+    #     self.mr_train(train_df, val_df)
         
-        # Test the classifier
-        return(self.mr_test(test_df))
+    #     # Test the classifier
+    #     return(self.mr_test(test_df))
     
     
     # Function for a dummy one-run on a provided train-test split
@@ -442,30 +514,58 @@ class MR_bilstm:
     
     # Function for a dummy 10-fold cross validation with a predefined test set
     # Input - full df, test df, ratio for splitting on val, number of runs
-    def mr_kfold_pre_split(self, full_df, test_df, val_r=0.25, num_runs=10, r_state = 42):
+    
+    def mr_kfold_pre_split(self, full_df, test_df, val_r=0.25, num_runs=10, r_state=42):
+    # Load the combined dataset
+    full_df = load_combined_data()  # Load combined data for training
+
+    # Initialize output
+    all_results = []        
+
+    # Run k-fold split
+    kf = KFold(n_splits=num_runs, shuffle=True, random_state=r_state)
+
+    # Run different splits
+    for train_index, test_index in kf.split(full_df):
+        train_df = full_df.iloc[train_index]
+        kv_test_df = full_df.iloc[test_index]
+
+        # Train on the cv, same as normal
+        kv_cur_acc, kv_cur_f1 = self.mr_one_run_pre_split(train_df, kv_test_df, val_r)
+
+        # Extra evaluation on the predefined test
+        cur_acc, cur_f1 = self.mr_test(test_df)
+
+        # Return all the results
+        all_results.append((kv_cur_acc, kv_cur_f1, cur_acc, cur_f1))
+
+    return all_results
+
+    
+    # def mr_kfold_pre_split(self, full_df, test_df, val_r=0.25, num_runs=10, r_state = 42):
         
-        # Initialize output
-        all_results = []        
+    #     # Initialize output
+    #     all_results = []        
         
-        # Run k-fold split
-        kf = KFold(n_splits=num_runs, shuffle=True, random_state = r_state)
+    #     # Run k-fold split
+    #     kf = KFold(n_splits=num_runs, shuffle=True, random_state = r_state)
         
-        # Run different splits
-        for train_index, test_index in kf.split(full_df):
+    #     # Run different splits
+    #     for train_index, test_index in kf.split(full_df):
             
-            # We evaluate both on the kfold and on the pre-set
-            # We do the k-fold split for consistency, but we only use train and val
-            train_df = full_df.iloc[train_index]
-            kv_test_df = full_df.iloc[test_index]
-            # Train on the cv, same as normal
-            kv_cur_acc, kv_cur_f1 = self.mr_one_run_pre_split(train_df, kv_test_df, val_r)
-            # Extra evaluation on the predefined test
-            cur_acc, cur_f1 = self.mr_test(test_df)
+    #         # We evaluate both on the kfold and on the pre-set
+    #         # We do the k-fold split for consistency, but we only use train and val
+    #         train_df = full_df.iloc[train_index]
+    #         kv_test_df = full_df.iloc[test_index]
+    #         # Train on the cv, same as normal
+    #         kv_cur_acc, kv_cur_f1 = self.mr_one_run_pre_split(train_df, kv_test_df, val_r)
+    #         # Extra evaluation on the predefined test
+    #         cur_acc, cur_f1 = self.mr_test(test_df)
             
-            # Return all the results
-            all_results.append((kv_cur_acc, kv_cur_f1, cur_acc, cur_f1))
+    #         # Return all the results
+    #         all_results.append((kv_cur_acc, kv_cur_f1, cur_acc, cur_f1))
             
-        return(all_results)            
+    #     return(all_results)            
     
     
     #### Augmentation
