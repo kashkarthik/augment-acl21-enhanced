@@ -32,7 +32,7 @@ from sklearn.feature_selection import SelectKBest, VarianceThreshold
 from sklearn.feature_selection import chi2
 from sklearn.model_selection import KFold
 from sklearn.base import BaseEstimator, TransformerMixin
-import gensim.models.wrappers.fasttext
+import fasttext
 from scipy import sparse
 import tensorflow_datasets as tfds
 import tensorflow as tf
@@ -41,6 +41,8 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from sklearn.model_selection import LeaveOneOut,KFold,train_test_split
 from sklearn.utils import shuffle
+from sklearn.metrics import accuracy_score, f1_score
+
 
 
 # Custom imports
@@ -172,53 +174,87 @@ class MR_bilstm:
     # Function that trains the classifier
     # Input - a train set, and a val set
     def mr_train(self, train_df, val_df):
-    # Reset the tokenizer and the model at the start of each training
-    self.mr_c = None
-    self.mr_tok = None       
+        # Reset the tokenizer and the model at the start of each training
+        self.mr_c = None
+        self.mr_tok = None       
 
-    # Load combined data for training
-    train_df = load_combined_data()  # Load the combined (original + augmented) dataset
+        # Load combined data for training
+        train_df = load_combined_data()  # Load the combined (original + augmented) dataset
 
-    # Convert dataframes to datasets
-    X_train_idx, y_train, train_dataset = self.mr_to_dataset(train_df)
-    X_val_idx, y_val, val_dataset = self.mr_to_dataset(val_df)
+        # Convert dataframes to datasets
+        X_train_idx, y_train, train_dataset = self.mr_to_dataset(train_df)
+        X_val_idx, y_val, val_dataset = self.mr_to_dataset(val_df)
+        
+        train_dataset = train_dataset.repeat() 
+        val_dataset = val_dataset.repeat()
+        
+        print(f"Train DataFrame size: {len(train_df)}")
+        print(f"Validation DataFrame size: {len(val_df)}")
+        
+        # print(f"Shape of X_train_idx: {np.shape(X_train_idx)}")
+        # print(f"Shape of y_train: {np.shape(y_train)}")
+        
+        steps_per_epoch = 1
+        validation_steps = 1
 
-    # Current shape var
-    inp_shape = np.shape(X_train_idx[0])[0]
 
-    # Define a vanilla BILSTM model
-    model = tf.keras.Sequential([
-        # Input layer
-        tf.keras.layers.Input(shape=(inp_shape)),
-        # Word embedding layers, size of the vocabulary X 64 dimensions
-        tf.keras.layers.Embedding(1000, 64),
-        # BILSTM layer, same dimensions as embeddings
-        tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
-        # Dense relu layer on top of the BILSTM
-        tf.keras.layers.Dense(64, activation='relu'),
-        # Add dropout to reduce overfitting
-        tf.keras.layers.Dropout(.5),
-        # Softmax classification for 3 classes
-        tf.keras.layers.Dense(3,activation='softmax')
-    ])
+        # Current shape var
+        inp_shape = np.shape(X_train_idx[0])[0]
+        self.input_shape = inp_shape 
+        print(f"Input shape: {inp_shape}") 
+        
+        # batch_size = 32  # Adjust this to your actual batch size
+        for data in train_dataset.take(1):
+            inferred_batch_size = data[0].shape[0]
+            print(f"Inferred batch size from train_dataset: {inferred_batch_size}")
 
-    # Compile the model
-    model.compile(loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
-                  optimizer=tf.keras.optimizers.Adam(1e-4),
-                  metrics=['accuracy'])        
+        # steps_per_epoch = max(1, (len(train_df) // inferred_batch_size) -1)
 
-    # Print the model summary
-    print(model.summary())
+        # Define a vanilla BILSTM model
+        model = tf.keras.Sequential([
+            # Input layer
+            tf.keras.layers.Input(shape=(int(np.shape(X_train_idx[0])[0]),)),
+            # Word embedding layers, size of the vocabulary X 64 dimensions
+            tf.keras.layers.Embedding(1000, 64),
+            # BILSTM layer, same dimensions as embeddings
+            tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(64)),
+            # Dense relu layer on top of the BILSTM
+            tf.keras.layers.Dense(64, activation='relu'),
+            # Add dropout to reduce overfitting
+            tf.keras.layers.Dropout(.5),
+            # Softmax classification for 3 classes
+            tf.keras.layers.Dense(3,activation='softmax')
+        ])
 
-    print('\n Training')
+        # Compile the model
+        model.compile(
+            loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=False),
+            optimizer=tf.keras.optimizers.Adam(1e-4),
+            metrics=['accuracy']
+        )        
 
-    # Train
-    history = model.fit(train_dataset, epochs=20,
-                        validation_data=val_dataset, 
-                        validation_steps=30)
+        # Print the model summary
+        print(model.summary())
 
-    # Update the current model variable
-    self.mr_c = model
+        print('\n Training')
+
+        # Train
+        
+        history = model.fit(
+            train_dataset,
+            epochs=20,
+            validation_data=val_dataset,
+            # validation_steps=30,
+            steps_per_epoch=steps_per_epoch,# Set custom steps_per_epoch
+            validation_steps=validation_steps,
+            verbose=0 
+        )
+        # history = model.fit(train_dataset, epochs=20,
+        #                     validation_data=val_dataset, 
+        #                     validation_steps=30)
+
+        # Update the current model variable
+        self.mr_c = model
 
     
     # def mr_train(self, train_df, val_df):
@@ -271,59 +307,84 @@ class MR_bilstm:
         
     # Function that evaluates the model on a test set
     # Input - test set
+    
     def mr_test(self, test_df):
+        # Check available columns in test_df
+        print("Columns in test_df:", test_df.columns)
+
+        # Assuming 'Score' is the target column and 'Question' is the input text column
+        y_test = test_df["Score"].values
+        # Tokenize the input text data in 'Question' column
+        X_test_idx = self.mr_tok.texts_to_sequences(test_df["Question"])
+        # # Pad sequences to ensure consistent input shape
+        X_test_idx = tf.keras.preprocessing.sequence.pad_sequences(X_test_idx, maxlen=self.input_shape, padding='post')
+        # # Predict using the trained model
+        y_pred = self.mr_c.predict(X_test_idx)
+        # Calculate metrics
+        test_accuracy = accuracy_score(y_test, y_pred.argmax(axis=1))  # Use argmax to get the class predictions
+        test_f1 = f1_score(y_test, y_pred.argmax(axis=1), average="macro")
+        print(f"Test Accuracy: {test_accuracy}")
+        print(f"Test Macro F1: {test_f1}")
+        return test_accuracy, test_f1
+
+
+    # def mr_test(self, test_df):
         
-        # Initialize output vars
-        acc_scores = []
-        f1_scores = []
+    #     # Initialize output vars
+    #     acc_scores = []
+    #     f1_scores = []
         
-        # Convert the dataframe to a dataset
-        X_test_idx, y_test, test_dataset = self.mr_to_dataset(test_df)
+    #     # Convert the dataframe to a dataset
+    #     X_test_idx, y_test, test_dataset = self.mr_to_dataset(test_df)
         
-        print("Testing the model on the test set:")
+    #     print("Testing the model on the test set:")
         
-        # Run the model internal evaluation on the test set
-        test_loss, test_acc = self.mr_c.evaluate(test_dataset)
+    #     # Run the model internal evaluation on the test set
+    #     test_loss, test_acc = self.mr_c.evaluate(test_dataset)
         
-        # Get the actual predictions of the model for the test set
-        #y_pred = self.mr_c.predict_classes(X_test_idx)
-        y_pred = np.argmax(self.mr_c.predict(X_test_idx), axis=-1)
-        # Calculate macro F1
-        macro_score = sklearn.metrics.f1_score(y_test.tolist(), 
-                                               [float(ele) for ele in y_pred],
-                                               average='macro')
+    #     # Get the actual predictions of the model for the test set
+    #     #y_pred = self.mr_c.predict_classes(X_test_idx)
+    #     y_pred = np.argmax(self.mr_c.predict(X_test_idx), axis=-1)
         
-        print('Test Macro F1: {} \n'.format(round(macro_score,2)))
+    #     print("y_test (actual values):", y_test.tolist())  # Check target values
+    #     print("y_pred (predicted values):", y_pred.tolist())  # Check predicted values
+    #     print("Evaluating test set macro F1 score...")
+    #     # Calculate macro F1
+    #     macro_score = sklearn.metrics.f1_score(y_test.tolist(), 
+    #                                            [float(ele) for ele in y_pred],
+    #                                            average='macro')
         
-        # Add the results to the output
-        acc_scores.append(round(test_acc,2))
-        f1_scores.append(round(macro_score,2))
+    #     print('Test Macro F1: {} \n'.format(round(macro_score,2)))
         
-        # Test by question (if requested)
-        # Add the scores to the output
-        # Otherwise add empty list
-        if self.eval_q:
-            qa_scores, qf_scores = self.mr_eval_col(test_df,"Question",self.q_list)
+    #     # Add the results to the output
+    #     acc_scores.append(round(test_acc,2))
+    #     f1_scores.append(round(macro_score,2))
+        
+    #     # Test by question (if requested)
+    #     # Add the scores to the output
+    #     # Otherwise add empty list
+    #     if self.eval_q:
+    #         qa_scores, qf_scores = self.mr_eval_col(test_df,"Question",self.q_list)
             
-            acc_scores.append(qa_scores)
-            f1_scores.append(qf_scores)
-        else:
-            acc_scores.append([])
-            f1_scores.append([])
+    #         acc_scores.append(qa_scores)
+    #         f1_scores.append(qf_scores)
+    #     else:
+    #         acc_scores.append([])
+    #         f1_scores.append([])
             
-        # Test by age (if requested)
-        # Add the scores to the output
-        # Otherwise add empty list    
-        if self.eval_age:
-            aa_scores, af_scores = self.mr_eval_col(test_df,"Age",self.age_list)
+    #     # Test by age (if requested)
+    #     # Add the scores to the output
+    #     # Otherwise add empty list    
+    #     if self.eval_age:
+    #         aa_scores, af_scores = self.mr_eval_col(test_df,"Age",self.age_list)
             
-            acc_scores.append(aa_scores)
-            f1_scores.append(af_scores)
-        else:
-            acc_scores.append([])
-            f1_scores.append([])
+    #         acc_scores.append(aa_scores)
+    #         f1_scores.append(af_scores)
+    #     else:
+    #         acc_scores.append([])
+    #         f1_scores.append([])
             
-        return(acc_scores,f1_scores)
+    #     return(acc_scores,f1_scores)
             
             
     # Function that evaluates the model by a specific column
@@ -340,7 +401,7 @@ class MR_bilstm:
         
         # Loop through all values
         for col_val in col_vals:
-            
+            print(f"Evaluating column: {col_name}, value: {col_val}")
             # Initialize output for wrong predictions, if needed
             if self.return_err:
                 cur_wrong = []
@@ -351,7 +412,10 @@ class MR_bilstm:
             # Convert dataframe to dataset
             X_test_idx, y_test, test_dataset = self.mr_to_dataset(cur_q)
             
-            print("Evaluating column {} with value {}".format(col_name,col_val))
+            print("y_test (actual values):", y_test.tolist())
+            print("Evaluating column-based macro F1 score...")
+            
+            # print("Evaluating column {} with value {}".format(col_name,col_val))
             
             # Print the internal evaluation
             test_loss, test_acc = self.mr_c.evaluate(test_dataset)
@@ -359,7 +423,7 @@ class MR_bilstm:
             # Get the actual predictions of the model for the test set
             #y_pred = self.mr_c.predict_classes(X_test_idx)
             y_pred = np.argmax(self.mr_c.predict(X_test_idx), axis=-1)
-            
+            print("y_pred (predicted values):", y_pred.tolist())
             # Calculate macro F1
             macro_score = sklearn.metrics.f1_score(y_test.tolist(), 
                                                    [float(ele) for ele in y_pred],
@@ -392,23 +456,23 @@ class MR_bilstm:
     # Input - full df, ratio for splitting on train/val/test, return errors or not
     
     def mr_one_train_test(self, full_df, test_r, val_r=0):
-    # Load combined data
-    full_df = load_combined_data()
+        # Load combined data
+        full_df = load_combined_data()
 
-    # Split train and test
-    train_df, test_df = train_test_split(full_df, test_size=test_r)
+        # Split train and test
+        train_df, test_df = train_test_split(full_df, test_size=test_r)
 
-    # Check if we also need val
-    if val_r > 0:
-        train_df, val_df = train_test_split(train_df, test_size=val_r)
-    else:
-        val_df = test_df
+        # Check if we also need val
+        if val_r > 0:
+            train_df, val_df = train_test_split(train_df, test_size=val_r)
+        else:
+            val_df = test_df
 
-    # Train the classifier
-    self.mr_train(train_df, val_df)
+        # Train the classifier
+        self.mr_train(train_df, val_df)
 
-    # Test the classifier
-    return self.mr_test(test_df)
+        # Test the classifier
+        return self.mr_test(test_df)
 
     
     # def mr_one_train_test(self, full_df, test_r, val_r=0):
@@ -516,30 +580,36 @@ class MR_bilstm:
     # Input - full df, test df, ratio for splitting on val, number of runs
     
     def mr_kfold_pre_split(self, full_df, test_df, val_r=0.25, num_runs=10, r_state=42):
-    # Load the combined dataset
-    full_df = load_combined_data()  # Load combined data for training
+        # Load the combined dataset
+        full_df = load_combined_data()  # Load combined data for training
 
-    # Initialize output
-    all_results = []        
+        # Initialize output
+        all_results = []        
 
-    # Run k-fold split
-    kf = KFold(n_splits=num_runs, shuffle=True, random_state=r_state)
+        # Run k-fold split
+        kf = KFold(n_splits=num_runs, shuffle=True, random_state=r_state)
 
-    # Run different splits
-    for train_index, test_index in kf.split(full_df):
-        train_df = full_df.iloc[train_index]
-        kv_test_df = full_df.iloc[test_index]
+        # Run different splits
+        for train_index, test_index in kf.split(full_df):
+            train_df = full_df.iloc[train_index]
+            kv_test_df = full_df.iloc[test_index]
+            
+            print(f"Fold Train Size: {len(train_df)}, Fold Validation Size: {len(kv_test_df)}, Test Size: {len(test_df)}")
 
-        # Train on the cv, same as normal
-        kv_cur_acc, kv_cur_f1 = self.mr_one_run_pre_split(train_df, kv_test_df, val_r)
+        # Check if the split datasets are empty
+            if train_df.empty or kv_test_df.empty:
+                raise ValueError("One of the KFold splits resulted in an empty DataFrame.")
 
-        # Extra evaluation on the predefined test
-        cur_acc, cur_f1 = self.mr_test(test_df)
+            # Train on the cv, same as normal
+            kv_cur_acc, kv_cur_f1 = self.mr_one_run_pre_split(train_df, kv_test_df, val_r)
 
-        # Return all the results
-        all_results.append((kv_cur_acc, kv_cur_f1, cur_acc, cur_f1))
+            # Extra evaluation on the predefined test
+            cur_acc, cur_f1 = self.mr_test(test_df)
 
-    return all_results
+            # Return all the results
+            all_results.append((kv_cur_acc, kv_cur_f1, cur_acc, cur_f1))
+
+        return all_results
 
     
     # def mr_kfold_pre_split(self, full_df, test_df, val_r=0.25, num_runs=10, r_state = 42):
