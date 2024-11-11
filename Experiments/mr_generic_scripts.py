@@ -3,6 +3,7 @@
 Generic scripts for managing input data for all classifiers
 
 @author: Venelin
+@author: Kaushik Karthikeyan
 """
 
 import pandas as pd

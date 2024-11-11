@@ -1,7 +1,7 @@
 import pandas as pd
 import random
 
-# Define some example questions and their corresponding possible answers
+
 qa_pairs = {
     "Why did the men hide?": [
         "The men hid to avoid getting caught.",
@@ -40,10 +40,10 @@ data = {
     "ID": range(1, 101),
     "Question": [],
     "Answer": [],
-    "Score": [random.randint(0, 2) for _ in range(100)],  # Assuming a 3-class system (0, 1, 2)
+    "Score": [random.randint(0, 2) for _ in range(100)],  
     "Age": [random.randint(8, 13) for _ in range(100)],  # Example ages
     "Gender": [random.choice(["Boy", "Girl"]) for _ in range(100)],
-    "Orig_ID": [None] * 100  # Optional, useful for linking augmented data
+    "Orig_ID": [None] * 100  
 }
 
 # Populate the questions and answers
@@ -53,7 +53,7 @@ for _ in range(100):
     data["Question"].append(question)
     data["Answer"].append(answer)
 
-# Create a DataFrame and save it as a CSV file
+# Create a DataFrame and save it as CSV file
 df = pd.DataFrame(data)
 df.to_csv("Data/original_data.csv", index=False)
 

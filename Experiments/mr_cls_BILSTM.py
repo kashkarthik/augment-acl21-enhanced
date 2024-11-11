@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 @author: Venelin Kovatchev
+@author: Kaushik Karthikeyan
 
 
 The class for the BILSTM classifier
@@ -46,7 +47,7 @@ from sklearn.metrics import accuracy_score, f1_score
 
 
 # Custom imports
-# Some of those functions can probably be incorporated as methods in the class
+
 from mr_generic_scripts import *
 from mr_generic_scripts import load_combined_data
 
@@ -203,7 +204,7 @@ class MR_bilstm:
         self.input_shape = inp_shape 
         print(f"Input shape: {inp_shape}") 
         
-        # batch_size = 32  # Adjust this to your actual batch size
+
         for data in train_dataset.take(1):
             inferred_batch_size = data[0].shape[0]
             print(f"Inferred batch size from train_dataset: {inferred_batch_size}")
@@ -556,7 +557,7 @@ class MR_bilstm:
         return(all_results)
     
       
-    #Function for a dummy 10-fold cross validation
+    #Function for a 10-fold cross validation
     # Input - full df, ratio for splitting on train/val/test, number of runs
     def mr_kfold_train_test(self, full_df, val_r=0.25, num_runs=10, r_state = 42):
         

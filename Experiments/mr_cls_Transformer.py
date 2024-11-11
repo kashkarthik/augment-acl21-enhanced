@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 @author: Venelin Kovatchev
+@author: Kaushik Karthikeyan
 
 
 The class for the Transformer model
